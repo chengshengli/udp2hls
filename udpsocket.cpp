@@ -102,7 +102,7 @@ int UdpDocket::udp_get_queue(uint8_t *buf,int size)
     if(write_ptr - read_ptr>max)
     {
         max = write_ptr - read_ptr;
-        printf("size=%d\n",max);
+ //       printf("size=%d\n",max);
     }
     return size;
 }
