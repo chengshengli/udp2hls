@@ -1,14 +1,20 @@
-#include <stdio.h>
+#include <cstdio>
 #include <stdlib.h>
-#include <string.h>
+#include <cstring>
+#include <iostream>
 //#include <unistd.h>
 //#include <fcntl.h>
 #include <netinet/in.h>
 #include "udpsocket.h"
+
+using namespace std;
+
 UdpDocket::UdpDocket()
 {
     bufsize = UDP_BUF;
-    q_buf = (uint8_t*)malloc(sizeof(uint8_t)*bufsize);
+    max = 0;
+//    q_buf = (uint8_t*)malloc(sizeof(uint8_t)*bufsize);
+    q_buf = new uint8_t[bufsize];
     pthread_mutex_init(&locker, NULL);
     write_ptr = 0;
     read_ptr = 0;
@@ -20,7 +26,8 @@ void UdpDocket::startup(void)
     err = pthread_create(&thid, NULL, this->udp_thread, this);
     if(err!=0)
     {
-        printf("create udp thread err.\n");
+        perror("create udp thread err.");
+        exit(1);
     }
 }
 
@@ -76,7 +83,7 @@ void UdpDocket::put_queue(uint8_t* buf, int size)
     write_ptr = (write_ptr + size) % bufsize;
     pthread_mutex_unlock(&locker);
 }
-int max=0;
+
 int UdpDocket::udp_get_queue(uint8_t *buf,int size)
 {
     int pos = write_ptr;
@@ -99,7 +106,7 @@ int UdpDocket::udp_get_queue(uint8_t *buf,int size)
         memcpy(buf, q_buf + read_ptr, size);
     read_ptr = (read_ptr + size) % bufsize;
     pthread_mutex_unlock(&locker);
-    if(write_ptr - read_ptr>max)
+    if((write_ptr - read_ptr) > max)
     {
         max = write_ptr - read_ptr;
  //       printf("size=%d\n",max);

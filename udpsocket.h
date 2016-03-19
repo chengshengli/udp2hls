@@ -19,6 +19,7 @@ private:
     pthread_mutex_t locker;
     uint8_t* q_buf;
     int write_ptr;
+    int max;
     int read_ptr;
     int bufsize;
     static void *udp_thread(void *arg);

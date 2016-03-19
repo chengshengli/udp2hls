@@ -1,28 +1,37 @@
-#include <stdio.h>
-#include <stdlib.h>
+#include <cstdio>
+#include <cstdlib>
 #include <unistd.h>
-#include <string.h>
-
+#include <iostream>
+#include <cstring>
+#include <sstream>
+using namespace std;
 #include "global.h"
 #include "tsparser.h"
+
+//#define DEBUG
+
 
 TsParser::TsParser()
 {
     bufSize = TS_PACKAGE_SIZE;
     buf = new uint8_t[bufSize*2];
-    fp_TS = NULL;
     tsFileCount = 0;
     listSeq = 0;
     deltTime = 0;
 
     first = 1;
     patReady = 0;
-    sprintf(listM3u8.sList[listM3u8.listLen++],"#EXTM3U\n");
+    listM3u8.sList[listM3u8.listLen++] = "#EXTM3U\n";
+    listM3u8.sList[listM3u8.listLen++] = "#EXT-X-VERSION:3\n";
+    listM3u8.sList[listM3u8.listLen++] = "#EXT-X-ALLOW-CACHE:YES\n";
+    listM3u8.sList[listM3u8.listLen++] = "#EXT-X-MEDIA-SEQUENCE:0\n";
+    listM3u8.sList[listM3u8.listLen++] = "#EXT-X-TARGETDURATION:10\n";
+/*    sprintf(listM3u8.sList[listM3u8.listLen++],"#EXTM3U\n");
     sprintf(listM3u8.sList[listM3u8.listLen++],"#EXT-X-VERSION:3\n");
     sprintf(listM3u8.sList[listM3u8.listLen++],"#EXT-X-ALLOW-CACHE:YES\n");
     sprintf(listM3u8.sList[listM3u8.listLen++],"#EXT-X-MEDIA-SEQUENCE:0\n");
     sprintf(listM3u8.sList[listM3u8.listLen++],"#EXT-X-TARGETDURATION:10\n");
-
+*/
 
     pidTs.PID_pat = 0;
 
@@ -36,7 +45,7 @@ void TsParser::startup(void)
     err = pthread_create(&thid, NULL, this->ts_parser_thread, this);
     if(err!=0)
     {
-        printf("create udp thread err.\n");
+        cout<<"create udp thread err.\n"<<endl;
     }
 }
 
@@ -44,7 +53,6 @@ void TsParser::deal_IDR(void)
 {
     uint32_t minPTS = videoInfo.PTS%5400000;
     uint32_t tmp;
- //   printf("minPTS:%d\n",minPTS);
     if(first)
     {
         initPTS = minPTS;
@@ -77,20 +85,16 @@ void TsParser::deal_IDR(void)
         {
             drop_tsfile();
         }
-
-//printf("3:%x %x %x %x %x %x \n",patData[0],patData[1],patData[2],patData[3],patData[4],patData[5]);
         new_tsfile();
     }
- //   printf("initPTS:%d\n",initPTS);
     minLastPTS = minPTS;
 }
 
 void TsParser::close_tsfile(void)
 {
-    if(fp_TS)
+    if(fp_TS.is_open())
     {
-        fclose(fp_TS);
-        fp_TS = NULL;
+        fp_TS.close();
         update_m3u8();
 
         delete_tsfile();
@@ -99,18 +103,18 @@ void TsParser::close_tsfile(void)
 }
 void TsParser::drop_tsfile(void)
 {
-    if(fp_TS)
+    if(fp_TS.is_open())
     {
-        fclose(fp_TS);
-        fp_TS = NULL;
-        char path[512]={0};
-        sprintf(updateName,"stream1-%d.ts",tsFileCount);
-        printf("drop:%s\n",updateName);
-        sprintf(path,"/usr/local/srs/trunk/objs/nginx/html/live/%s",updateName);
+        fp_TS.close();
+        string path;
+        cout << "drop:" + updateName <<endl;
+#ifdef DEBUG
+        path = "./" + updateName;
+#else
+        path = "/usr/local/srs/trunk/objs/nginx/html/live/" + updateName;
 
-//        update_m3u8();
-
-        remove(path);
+#endif
+        remove(path.c_str());
 
     }
 }
@@ -118,76 +122,117 @@ void TsParser::drop_tsfile(void)
 void TsParser::new_tsfile(void)
 {
 
-    if(!fp_TS)
+    if(!fp_TS.is_open())
     {
-        char path[512]={0};
-        sprintf(updateName,"stream1-%d.ts",tsFileCount);
-        printf("open:%s\n",updateName);
-        sprintf(path,"/usr/local/srs/trunk/objs/nginx/html/live/%s",updateName);
-//        sprintf(path,"./%s",updateName);
-        fp_TS = fopen(path,"wb");
- //       printf("%x %x %x %x %x %x \n",patData[0],patData[1],patData[2],patData[3],patData[4],patData[5]);
-  //      if(patData[0]==0)patData[0]=0x47;
-        printf("%x %x %x %x %x %x \n",patData[0],patData[1],patData[2],patData[3],patData[4],patData[5]);
-        fwrite(patData,TS_PACKAGE_SIZE,1,fp_TS);
-        fwrite(pmtData,TS_PACKAGE_SIZE,1,fp_TS);
+        stringstream s;
+        string path;
+        s.str("");
+        s << tsFileCount;
+        updateName = "stream1-" + s.str() + ".ts";
+        cout << "open:" + updateName << endl;
+#ifdef DEBUG
+        path = "./" + updateName;
+#else
+        path = "/usr/local/srs/trunk/objs/nginx/html/live/" + updateName;
+#endif
+        fp_TS.open(path.c_str(), ofstream::out | ofstream::binary);
+        if(fp_TS)
+        {
+            fp_TS.write((char*)patData,TS_PACKAGE_SIZE);
+            fp_TS.write((char*)pmtData,TS_PACKAGE_SIZE);
+        }
     }
 }
 
 void TsParser::delete_tsfile(void)
 {
-    if(listM3u8.listLen >= (4 + LIST_TS_FILE_NUM *2))
+    if(listM3u8.listLen >= (4 + LIST_TS_FILE_NUM *2) && tsFileCount > 5)
     {
-
-        char path[512]={0};
-//printf("1:%x %x %x %x %x %x \n",patData[0],patData[1],patData[2],patData[3],patData[4],patData[5]);
-        sprintf(deleteName,"stream1-%d.ts",tsFileCount-6);
- //       sprintf(path,"./%s",deleteName);
- //       printf("1.5:%x %x %x %x %x %x \n",patData[0],patData[1],patData[2],patData[3],patData[4],patData[5]);
-        sprintf(path,"/usr/local/srs/trunk/objs/nginx/html/live/%s",deleteName);
- //  printf("2:%x %x %x %x %x %x \n",patData[0],patData[1],patData[2],patData[3],patData[4],patData[5]);
-        remove(path);
+#ifdef DEBUG
+        string path("./");
+#else
+        string path("/usr/local/srs/trunk/objs/nginx/html/live/");
+#endif
+        stringstream s;
+        s.str("");\
+        s << tsFileCount-6;
+        deleteName = "stream1-" + s.str() + ".ts";
+        path = path + deleteName ;
+        cout <<"delete:" + deleteName << endl;
+        if(access(path.c_str(),0) != -1)
+        {
+            remove(path.c_str());
+        }
 
     }
 }
 
 void TsParser::update_m3u8(void)
 {
-    FILE* fpM3u8 = NULL;
-    char path[512]={0};
-    sprintf(path,"/usr/local/srs/trunk/objs/nginx/html/live/stream1.m3u8");
-//    sprintf(path,"./livestream.m3u8");
-    fpM3u8 = fopen(path,"w");
+ //   FILE* fpM3u8 = NULL;
 
-    if(fpM3u8)
-    {
+#ifdef DEBUG
+    string path("./stream1.m3u8");
+
+#else
+    string path("/usr/local/srs/trunk/objs/nginx/html/live/stream1.m3u8");
+
+#endif
+
+ //   fpM3u8 = fopen(path,"w");
+
+        stringstream s;
 
         if(listSeq >= 5)
-            sprintf(listM3u8.sList[3]+22,"%u\n",listSeq-4);
+        {
+            s.str("");
+            s << (listSeq - 4);
+            listM3u8.sList[3] = "#EXT-X-MEDIA-SEQUENCE:" + s.str() + "\n";
+         //   sprintf(listM3u8.sList[3]+22,"%u\n",listSeq-4);
+        }
         listSeq++;
         if(listM3u8.listLen < (4 + LIST_TS_FILE_NUM *2))
         {
-            sprintf(listM3u8.sList[listM3u8.listLen++],"#EXTINF:%.3f\n",deltTime);
-            sprintf(listM3u8.sList[listM3u8.listLen++],"stream1-%d.ts\n",tsFileCount++);
+            s.str("");
+            s << deltTime;
+            listM3u8.sList[listM3u8.listLen++] = "#EXTINF:" + s.str()+ "\n";
+            s.str("");
+            s << tsFileCount++;
+            listM3u8.sList[listM3u8.listLen++] = "stream1-" + s.str() + ".ts\n";
+      //      sprintf(listM3u8.sList[listM3u8.listLen++],"#EXTINF:%.3f\n",deltTime);
+     //       sprintf(listM3u8.sList[listM3u8.listLen++],"stream1-%d.ts\n",tsFileCount++);
         }
         else
         {
             for(int i=0; i < LIST_TS_FILE_NUM - 1; i++)
             {
-                strcpy(listM3u8.sList[5+2*i],listM3u8.sList[7+2*i]);
-                strcpy(listM3u8.sList[6+2*i],listM3u8.sList[8+2*i]);
+                listM3u8.sList[5+2*i] = listM3u8.sList[7+2*i];
+                listM3u8.sList[6+2*i] = listM3u8.sList[8+2*i];
+        //        strcpy(listM3u8.sList[5+2*i],listM3u8.sList[7+2*i]);
+         //       strcpy(listM3u8.sList[6+2*i],listM3u8.sList[8+2*i]);
             }
-            sprintf(listM3u8.sList[5+(LIST_TS_FILE_NUM-1)*2],"#EXTINF:%.3f\n",deltTime);
-            sprintf(listM3u8.sList[6+(LIST_TS_FILE_NUM-1)*2],"stream1-%d.ts\n",tsFileCount++);
+            s.str("");
+            s << deltTime;
+            listM3u8.sList[5+(LIST_TS_FILE_NUM-1)*2] = "#EXTINF:" + s.str()+ "\n";
+            s.str("");
+            s << tsFileCount++;
+            listM3u8.sList[6+(LIST_TS_FILE_NUM-1)*2] = "stream1-" + s.str() + ".ts\n";
+
+       //     sprintf(listM3u8.sList[5+(LIST_TS_FILE_NUM-1)*2],"#EXTINF:%.3f\n",deltTime);
+       //     sprintf(listM3u8.sList[6+(LIST_TS_FILE_NUM-1)*2],"stream1-%d.ts\n",tsFileCount++);
         }
 
-    }
 
-    for (int i = 0; i < listM3u8.listLen; i++)
+    ofstream fpM3u8(path.c_str(),ofstream::out);
+    if(fpM3u8.is_open())
     {
-        fputs(listM3u8.sList[i],fpM3u8);
+        for (int i = 0; i < listM3u8.listLen; i++)
+        {
+            fpM3u8 << listM3u8.sList[i];
+//        fputs(listM3u8.sList[i],fpM3u8);
+        }
+        fpM3u8.close();
     }
-    fclose(fpM3u8);
 }
 
 
@@ -323,7 +368,6 @@ int TsParser::parser_nal(uint8_t index)
 
 int TsParser::parser_vedio(void)
 {
- //   printf(" tag is: %x %x %x %x %x %x %x %x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5],buf[6],buf[7]);
     uint8_t tmp = *(buf+3) & 0xf;
     uint8_t index=0;
     if(((videoInfo.counter+1)&0xf) != tmp)
@@ -335,10 +379,9 @@ int TsParser::parser_vedio(void)
         bool pts_be = false,dts_be = false;
 
         index = 4 + tsHeader.adaptation_filed *(buf[4] + 1);
- //       printf("the PES tag is: %x %x %x %x %x %x %x %x %x %x\n",buf[index],buf[index+1],buf[0],buf[1],buf[2],buf[3],buf[4],buf[5],buf[6],buf[7]);
-        if((buf[index]==0) && (buf[index+1] == 0) && (buf[index+2]==1) && (buf[index+3]==0xE0))
-        {cnt_a++;
-            //printf("get the PES.\n");
+       if((buf[index]==0) && (buf[index+1] == 0) && (buf[index+2]==1) && (buf[index+3]==0xE0))
+        {
+            cnt_a++;
             pes_header_len = buf[index+8];
             pts_be = buf[index+7] & 0x80;
             dts_be = buf[index+7] & 0x40;
@@ -367,10 +410,7 @@ int TsParser::parser_vedio(void)
             index += pes_header_len + 9;
 
             parser_nal(index);
- //       printf("%x %x %x %x %x\n",buf[index],buf[index+1],buf[index+2],buf[index+3],buf[index+4]);
         }
-        //printf("%x %x %x %x %x\n",buf[index+9],buf[index+10],buf[index+11],buf[index+12],buf[index+13]);
-  //      printf("PTS:%ld\n",video_info.PTS);
     }
     return 0;
 }
@@ -387,11 +427,8 @@ int TsParser::parser_ts_packet(void)
     if(tsHeader.this_pid == pidTs.PID_pat)
     {
         parser_pat();
- //       if(!patReady)
-  //      {
-            patReady = 1;
-            memcpy(patData,buf,TS_PACKAGE_SIZE);
-  //      }
+        patReady = 1;
+        memcpy(patData,buf,TS_PACKAGE_SIZE);
         return 0;
     }
     else if(tsHeader.this_pid == pidTs.PID_pmt)
@@ -402,7 +439,7 @@ int TsParser::parser_ts_packet(void)
     }
     else if(tsHeader.this_pid == pidTs.PID_pcr)
     {
- //       return 0;
+
     }
     else if(tsHeader.this_pid == pidTs.PID_vedio)
         parser_vedio();
@@ -410,7 +447,8 @@ int TsParser::parser_ts_packet(void)
         parser_audio();
     if(fp_TS)
     {
-        fwrite(buf,TS_PACKAGE_SIZE,1,fp_TS);
+    //    fwrite(buf,TS_PACKAGE_SIZE,1,fp_TS);
+        fp_TS.write((char*)buf,TS_PACKAGE_SIZE);
     }
     return 0;
 }
@@ -424,12 +462,10 @@ int TsParser::get_ts_packet()
 void *TsParser::ts_parser_thread(void *args)
 {
     TsParser * myts = static_cast<TsParser *>(args);
-    int cnt = 0;
     while(1)
     {
         if(myts->get_ts_packet()==TS_PACKAGE_SIZE)
         {
-           // printf("%d\n",cnt++);
             if(myts->parser_ts_packet() != 0)
                 continue;
 

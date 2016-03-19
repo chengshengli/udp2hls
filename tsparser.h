@@ -40,7 +40,8 @@ struct VIDEO_Info{
 
 struct List_Info
 {
-    char sList[16][64];
+  //  char sList[16][64];
+    string sList[16];
     int listLen;
     List_Info()
     {
@@ -73,10 +74,12 @@ private:
 
     List_Info listM3u8;
     uint32_t listSeq;
-    FILE* fp_TS;
+    ofstream fp_TS;
     uint32_t tsFileCount;
-    char updateName[32];
-    char deleteName[32];
+    string updateName;
+    //char updateName[32];
+    string deleteName;
+    //string deleteName;
     uint8_t patData[188];
     uint8_t pmtData[188];
 
