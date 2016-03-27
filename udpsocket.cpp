@@ -5,19 +5,30 @@
 //#include <unistd.h>
 //#include <fcntl.h>
 #include <netinet/in.h>
+#include <sys/select.h>
 #include "udpsocket.h"
 
 using namespace std;
 
+fd_set m_fdset_read;
+
 UdpDocket::UdpDocket()
 {
     bufsize = UDP_BUF;
-    max = 0;
 //    q_buf = (uint8_t*)malloc(sizeof(uint8_t)*bufsize);
-    q_buf = new uint8_t[bufsize];
-    pthread_mutex_init(&locker, NULL);
-    write_ptr = 0;
-    read_ptr = 0;
+
+    for(int i=0;i<UDP_SOCKET_NUM;i++)
+    {
+        pthread_mutex_init(&locker[i], NULL);
+        q_buf[i] = new uint8_t[UDP_BUF];
+        write_ptr[i] = 0;
+        read_ptr[i] = 0;
+        max[i] = 0;
+    }
+}
+UdpDocket::~UdpDocket()
+{
+    delete []q_buf;
 }
 
 void UdpDocket::startup(void)
@@ -34,31 +45,65 @@ void UdpDocket::startup(void)
 void *UdpDocket::udp_thread(void *args)
 {
     UdpDocket * myudp = static_cast<UdpDocket *>(args);
-    int port = 10000;
-    struct sockaddr_in client_addr;
-    socklen_t client_addr_length = sizeof(client_addr);
+    int port[UDP_SOCKET_NUM] = {0};
+    int server_socket_fd[UDP_SOCKET_NUM];
+
+    struct sockaddr_in client_addr[UDP_SOCKET_NUM];
+    socklen_t client_addr_length = sizeof(client_addr[0]);
     /*create the UDP socket.*/
-    struct sockaddr_in server_addr;
+    struct sockaddr_in server_addr[UDP_SOCKET_NUM];
     uint8_t rec_buf[RECVBUF];
-//    int fd,
-    int cnt=0;
-//    fd = creat("./test.ts",S_IWUSR | S_IRUSR);
-    bzero(&server_addr, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = htons(INADDR_ANY);
-    server_addr.sin_port = htons(port);
-    int server_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if(server_socket_fd == -1)
+
+    for(int i=0;i<UDP_SOCKET_NUM;i++)
     {
-         perror("Create Socket Failed:");
-         exit(1);
+        port[i] = 10000+i;
+        bzero(&server_addr[i], sizeof(server_addr[i]));
+        server_addr[i].sin_family = AF_INET;
+        server_addr[i].sin_addr.s_addr = htons(INADDR_ANY);
+        server_addr[i].sin_port = htons(port[i]);
+        server_socket_fd[i] = socket(AF_INET, SOCK_DGRAM, 0);
+        if(server_socket_fd[i] == -1)
+        {
+             perror("Create Socket Failed:");
+             exit(1);
+        }
+        bind(server_socket_fd[i],(struct sockaddr*)&server_addr[i],sizeof(server_addr[i]));
     }
-    bind(server_socket_fd,(struct sockaddr*)&server_addr,sizeof(server_addr));
+
+
     while(1)
     {
-        int len = recvfrom(server_socket_fd, rec_buf, RECVBUF,0,(struct sockaddr*)&client_addr, &client_addr_length);
+        FD_ZERO( &m_fdset_read );
+        int nMaxFd = 0;   // wangding, find the max fd
+
+        int nClientCount = 0;
+        for(int i=0; i<UDP_SOCKET_NUM; i++ )
+        {
+            FD_SET( server_socket_fd[i], &m_fdset_read );
+            nClientCount ++;
+            if( server_socket_fd[i] > nMaxFd )
+                nMaxFd = server_socket_fd[i];
+        }
+
+        struct timeval TimeOut;   // Linux struct
+        TimeOut.tv_sec = 0;
+        TimeOut.tv_usec= 1000;
+        select( nMaxFd+1, &m_fdset_read, NULL, NULL, &TimeOut);
+        for(int i=0; i<UDP_SOCKET_NUM; i++)
+        {
+            if(FD_ISSET(server_socket_fd[i],&m_fdset_read))
+            {
+                int len = recvfrom(server_socket_fd[i], rec_buf, RECVBUF,0,(struct sockaddr*)&client_addr[i], &client_addr_length);
+                myudp->put_queue(i,rec_buf,len);
+            }
+
+        }
+
+
+
+ //
 //        printf("%d\n",len);
-        myudp->put_queue(rec_buf,len);
+ //
 //        sleep(1);
 //        write(fd,myudp->q_buf,len);
 //       printf("the cnt is %d.\n",cnt++);
@@ -67,48 +112,51 @@ void *UdpDocket::udp_thread(void *args)
 //    close(fd);
 }
 
-void UdpDocket::put_queue(uint8_t* buf, int size)
+void UdpDocket::put_queue(uint8_t index, uint8_t* buf, int size)
 {
-    pthread_mutex_lock(&locker);
-    if(write_ptr + size > bufsize)
+    uint8_t* thisbuf=static_cast<uint8_t *>(q_buf[index]);
+
+    pthread_mutex_lock(&locker[index]);
+    if(write_ptr[index] + size > bufsize)
     {
-        memcpy(q_buf+write_ptr,buf,bufsize - write_ptr);
-        memcpy(q_buf,buf + bufsize - write_ptr,write_ptr + size - bufsize);
+        memcpy(thisbuf + write_ptr[index],buf,bufsize - write_ptr[index]);
+        memcpy(thisbuf,buf + bufsize - write_ptr[index],write_ptr[index] + size - bufsize);
 
     }
     else
     {
-        memcpy(q_buf+write_ptr,buf,size);
+        memcpy(thisbuf+write_ptr[index],buf,size);
     }
-    write_ptr = (write_ptr + size) % bufsize;
-    pthread_mutex_unlock(&locker);
+    write_ptr[index] = (write_ptr[index] + size) % bufsize;
+    pthread_mutex_unlock(&locker[index]);
 }
 
-int UdpDocket::udp_get_queue(uint8_t *buf,int size)
+int UdpDocket::udp_get_queue(uint8_t index, uint8_t *buf,int size)
 {
-    int pos = write_ptr;
-    pthread_mutex_lock(&locker);
-    if(pos < read_ptr)
+    int pos = write_ptr[index];
+    uint8_t* thisbuf=static_cast<uint8_t *>(q_buf[index]);
+    pthread_mutex_lock(&locker[index]);
+    if(pos < read_ptr[index])
     {
         pos += bufsize;
     }
-    if(read_ptr + size > pos)
+    if(read_ptr[index] + size > pos)
     {
-        pthread_mutex_unlock(&locker);
+        pthread_mutex_unlock(&locker[index]);
         return 0;
     }
-    if(read_ptr + size > bufsize)
+    if(read_ptr[index] + size > bufsize)
     {
-        memcpy(buf, q_buf + read_ptr, bufsize - read_ptr);
-        memcpy(buf + bufsize - read_ptr, q_buf, size - (bufsize - read_ptr));
+        memcpy(buf, thisbuf + read_ptr[index], bufsize - read_ptr[index]);
+        memcpy(buf + bufsize - read_ptr[index], thisbuf, size - (bufsize - read_ptr[index]));
     }
     else
-        memcpy(buf, q_buf + read_ptr, size);
-    read_ptr = (read_ptr + size) % bufsize;
-    pthread_mutex_unlock(&locker);
-    if((write_ptr - read_ptr) > max)
+        memcpy(buf, thisbuf + read_ptr[index], size);
+    read_ptr[index] = (read_ptr[index] + size) % bufsize;
+    pthread_mutex_unlock(&locker[index]);
+    if((write_ptr[index] - read_ptr[index]) > max[index])
     {
-        max = write_ptr - read_ptr;
+        max[index] = write_ptr[index] - read_ptr[index];
  //       printf("size=%d\n",max);
     }
     return size;

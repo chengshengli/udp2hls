@@ -41,7 +41,7 @@ struct VIDEO_Info{
 struct List_Info
 {
   //  char sList[16][64];
-    string sList[16];
+    std::string sList[16];
     int listLen;
     List_Info()
     {
@@ -53,11 +53,13 @@ class TsParser
 {
 public:
 
-    TsParser();
+    TsParser(uint8_t index);
+    ~TsParser();
     void startup(void);
 
 private:
     pthread_t thid;
+    uint8_t channel;
     uint8_t *buf;
     uint8_t bufSize;
     uint16_t pid;
@@ -74,11 +76,11 @@ private:
 
     List_Info listM3u8;
     uint32_t listSeq;
-    ofstream fp_TS;
+    std::ofstream fp_TS;
     uint32_t tsFileCount;
-    string updateName;
+    std::string updateName;
     //char updateName[32];
-    string deleteName;
+    std::string deleteName;
     //string deleteName;
     uint8_t patData[188];
     uint8_t pmtData[188];
