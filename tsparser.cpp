@@ -93,7 +93,7 @@ void TsParser::close_tsfile(void)
 {
     if(fp_TS.is_open())
     {
-//        cout<<"close" + updateName<<endl;
+        cout<<"close" + updateName<<endl;
         fp_TS.close();
         update_m3u8();
 
@@ -142,7 +142,7 @@ void TsParser::new_tsfile(void)
         fp_TS.open(path.c_str(), ofstream::out | ofstream::binary);
         if(fp_TS)
         {
-//            cout << "open success." << endl;
+            cout << "open success." << endl;
             fp_TS.write((char*)patData,TS_PACKAGE_SIZE);
             fp_TS.write((char*)pmtData,TS_PACKAGE_SIZE);
         }
@@ -166,7 +166,7 @@ void TsParser::delete_tsfile(void)
         s << tsFileCount-6;
         deleteName = deleteName + s.str() + ".ts";
         path = path + deleteName ;
-//        cout <<"delete:" + deleteName << endl;
+        cout <<"delete:" + deleteName << endl;
         if(access(path.c_str(),0) != -1)
         {
             remove(path.c_str());
@@ -249,6 +249,10 @@ int TsParser::parser_header(void)
     tsHeader.this_pid = (tmp & 0x1fff);
 
     tsHeader.indicator = (buf[1] & 0x40)>>6;
+    if(tsHeader.indicator)
+        tsHeader.tableSkew = buf[4];
+    else
+        tsHeader.tableSkew = 0;
 
     if((buf[3]&0x20) !=0)
         tsHeader.adaptation_filed = 1;
@@ -261,9 +265,7 @@ int TsParser::parser_header(void)
 
 int TsParser::parser_pat(void)
 {
-    uint8_t pos = 4 + tsHeader.indicator;
-    if((*(buf + pos + 5) & 0x01)==0)
-        return 1;
+    uint8_t pos = 4 + tsHeader.indicator + tsHeader.tableSkew;
     uint8_t version = (*(buf + pos + 5) & 0x3e)>>1;
     if(patInfo.PAT_version != version)
     {
@@ -280,7 +282,7 @@ int TsParser::parser_pat(void)
 
 int TsParser::parser_pmt(void)
 {
-    uint8_t pos = 4 + tsHeader.indicator;
+    uint8_t pos = 4 + tsHeader.indicator + tsHeader.tableSkew;
     uint16_t len = ((uint16_t)(*(buf + pos + 1)&0x0f) << 8) | *(buf + pos + 2);
     uint8_t version = (*(buf + pos + 5) & 0x3e)>>1;
     if(pmtInfo.PMT_version != version)
@@ -290,13 +292,14 @@ int TsParser::parser_pmt(void)
     }
     pidTs.PID_pcr = ((uint16_t)(*(buf + pos + 8)&0x1f) << 8) | *(buf + pos + 9);
     int index = 12+pos;
-    int times = (len-9-4)/5;
-    while(times--)
+
+    while(index+4<188)
     {
         switch(*(buf+index))
         {
         case 0x1B:
             pidTs.PID_vedio = ((uint16_t)(*(buf + index + 1)&0x1f) << 8) | *(buf + index + 2);
+
             break;
         case 0x0f:
             pidTs.PID_audio = ((uint16_t)(*(buf + index + 1)&0x1f) << 8) | *(buf + index + 2);
@@ -304,7 +307,7 @@ int TsParser::parser_pmt(void)
         default:
             break;
         }
-        index+=5;
+        index+=(5+(*(buf + index + 4)));
     }
     return 0;
 }
@@ -362,13 +365,20 @@ int TsParser::parser_nal(uint8_t index)
     printf("reach the end.\n");
     return 0;
 }
-
+int cnt_lose=0;
 int TsParser::parser_vedio(void)
 {
     uint8_t tmp = *(buf+3) & 0xf;
     uint8_t index=0;
-    if(((videoInfo.counter+1)&0xf) != tmp)
-        printf("lose a packet.\n");
+//    if(((videoInfo.counter+1)&0xf) != tmp)
+//        printf("lose a packet:%d\n",cnt_lose++);
+    if(pidTs.PID_pcr == pidTs.PID_vedio)
+    {
+        if((*(buf+3) & 0x30) == 0x30)
+        {
+            index+=*(buf+4);
+        }
+    }
     videoInfo.counter = tmp;
     if(tsHeader.indicator)
     {
@@ -434,10 +444,10 @@ int TsParser::parser_ts_packet(void)
         memcpy(pmtData,buf,TS_PACKAGE_SIZE);
         return 0;
     }
-    else if(tsHeader.this_pid == pidTs.PID_pcr)
-    {
+//    else if(tsHeader.this_pid == pidTs.PID_pcr)
+//    {
 
-    }
+//    }
     else if(tsHeader.this_pid == pidTs.PID_vedio)
         parser_vedio();
     else if(tsHeader.this_pid == pidTs.PID_audio)
@@ -462,6 +472,7 @@ void *TsParser::ts_parser_thread(void *args)
     {
         if(myts->get_ts_packet()==TS_PACKAGE_SIZE)
         {
+
             if(myts->parser_ts_packet() != 0)
                 continue;
 

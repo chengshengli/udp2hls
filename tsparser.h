@@ -18,7 +18,7 @@ struct TS_Header{
     uint8_t indicator;
     uint16_t this_pid;
     uint8_t adaptation_filed;
-
+    uint8_t tableSkew;
     uint8_t counter;
 };
 struct PAT_Info{

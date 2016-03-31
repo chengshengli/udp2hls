@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <pthread.h>
 
-#define UDP_BUF 1024 * 256
+#define UDP_BUF 1024 * 188 *12
 #define RECVBUF 188*4
 #define UDP_SOCKET_NUM 16
 

@@ -25,6 +25,7 @@ UdpDocket::UdpDocket()
         read_ptr[i] = 0;
         max[i] = 0;
     }
+    cout<<"init udp."<<endl;
 }
 UdpDocket::~UdpDocket()
 {
@@ -94,7 +95,13 @@ void *UdpDocket::udp_thread(void *args)
             if(FD_ISSET(server_socket_fd[i],&m_fdset_read))
             {
                 int len = recvfrom(server_socket_fd[i], rec_buf, RECVBUF,0,(struct sockaddr*)&client_addr[i], &client_addr_length);
-                myudp->put_queue(i,rec_buf,len);
+  //              printf("data:%x %x %x %x %x %x\n",rec_buf[0],rec_buf[1],rec_buf[2],rec_buf[3],rec_buf[4],rec_buf[5]);
+  //              if(len==3*188)
+  //                  printf("data lose 188.\n");
+  //              printf("len:%d",len);
+                 if(len % 188 == 0)
+ //                   printf("lose %d.\n",4*188-len);
+                    myudp->put_queue(i,rec_buf,len);
             }
 
         }
@@ -114,7 +121,7 @@ void *UdpDocket::udp_thread(void *args)
 
 void UdpDocket::put_queue(uint8_t index, uint8_t* buf, int size)
 {
-    uint8_t* thisbuf=static_cast<uint8_t *>(q_buf[index]);
+    uint8_t* thisbuf=(q_buf[index]);
 
     pthread_mutex_lock(&locker[index]);
     if(write_ptr[index] + size > bufsize)
@@ -134,8 +141,9 @@ void UdpDocket::put_queue(uint8_t index, uint8_t* buf, int size)
 int UdpDocket::udp_get_queue(uint8_t index, uint8_t *buf,int size)
 {
     int pos = write_ptr[index];
-    uint8_t* thisbuf=static_cast<uint8_t *>(q_buf[index]);
+    uint8_t* thisbuf=(q_buf[index]);
     pthread_mutex_lock(&locker[index]);
+
     if(pos < read_ptr[index])
     {
         pos += bufsize;
@@ -145,6 +153,8 @@ int UdpDocket::udp_get_queue(uint8_t index, uint8_t *buf,int size)
         pthread_mutex_unlock(&locker[index]);
         return 0;
     }
+//    if(index==0)
+//       printf("data:%d %d\n",read_ptr[index]%188,write_ptr[index]%188);
     if(read_ptr[index] + size > bufsize)
     {
         memcpy(buf, thisbuf + read_ptr[index], bufsize - read_ptr[index]);
@@ -154,10 +164,10 @@ int UdpDocket::udp_get_queue(uint8_t index, uint8_t *buf,int size)
         memcpy(buf, thisbuf + read_ptr[index], size);
     read_ptr[index] = (read_ptr[index] + size) % bufsize;
     pthread_mutex_unlock(&locker[index]);
-    if((write_ptr[index] - read_ptr[index]) > max[index])
+ /*   if((write_ptr[index] - read_ptr[index]) > max[index])
     {
         max[index] = write_ptr[index] - read_ptr[index];
  //       printf("size=%d\n",max);
-    }
+    }*/
     return size;
 }
